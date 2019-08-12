@@ -12,11 +12,12 @@
 
 #include <iostream>
 
+void program(thrill::Context& ctx) {
+    std::cout << "Hello World, I am " << ctx.my_rank() << std::endl;
+}
+
 int main(int argc, char* argv[]) {
-    return thrill::Run(
-        [&](thrill::Context& ctx) {
-            std::cout << "Hello World, I am " << ctx.my_rank() << std::endl;
-        });
+    return thrill::Run(program);
 }
 
 /******************************************************************************/
