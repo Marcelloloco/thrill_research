@@ -23,7 +23,7 @@ endif("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wall")
 
 # include Thrill as cmake subproject
-add_subdirectory(extlib/thrill)
+add_subdirectory(thrill)
 
 # create and executable and link with Thrill (all flags and includes are added)
 add_executable(minimal main.cpp)

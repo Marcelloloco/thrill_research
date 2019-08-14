@@ -1,3 +1,3 @@
-[submodule "extlib/thrill"]
-	path = extlib/thrill
+[submodule "thrill"]
+	path = thrill
 	url = https://github.com/thrill/thrill.git
