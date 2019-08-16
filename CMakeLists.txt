@@ -12,7 +12,7 @@
 cmake_minimum_required(VERSION 2.8.0)
 
 # we first give our project a name
-project(minimal-project)
+project(tutorial-project)
 
 # prohibit in-source builds
 if("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
@@ -26,7 +26,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wall")
 add_subdirectory(thrill)
 
 # create and executable and link with Thrill (all flags and includes are added)
-add_executable(minimal main.cpp)
-target_link_libraries(minimal thrill)
+add_executable(simple main.cpp)
+target_link_libraries(simple thrill)
 
 ################################################################################
