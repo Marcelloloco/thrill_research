@@ -8,7 +8,7 @@
  * All rights reserved. Published under the BSD-2 license in the LICENSE file.
  ******************************************************************************/
 
-#include <thrill/api/context.hpp>
+#include <thrill/thrill.hpp>
 
 #include <iostream>
 
