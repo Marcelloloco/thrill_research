@@ -47,6 +47,11 @@ with open(sys.argv[1]) as f:
         if match:
             SVGPoint(match[1], match[2], MakeColor(int(match[3])))
             #SVGCircle(match[1], match[2], 6, MakeColor(int(match[3])))
+        # match (x,y:c syntax
+        match = re.search('\(\(([0-9.e]+),([0-9.e]+)\):([0-9]+)', line)
+        if match:
+            SVGPoint(match[1], match[2], MakeColor(int(match[3])))
+            #SVGCircle(match[1], match[2], 6, MakeColor(int(match[3])))
 
 # SVG footer
 print("</g></svg>")
