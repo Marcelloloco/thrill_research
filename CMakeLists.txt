@@ -25,6 +25,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wall")
 # include Thrill as cmake subproject
 add_subdirectory(thrill)
 
+include_directories(boost_1_77_0)
+
 # create and executable and link with Thrill (all flags and includes are added)
 add_executable(simple main.cpp)
 target_link_libraries(simple thrill)

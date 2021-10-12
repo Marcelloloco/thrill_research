@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Hermann Hessling (HTW Berlin), Jan. 2020, based on
+ * Hermann Hessling (HTW Berlin), Dec. 2019, based on
  * examples/word_count/word_count_simple.cpp
  * Part of Project Thrill - http://project-thrill.org
  * Copyright (C) 2016 Timo Bingmann <tb@panthema.net>
@@ -18,60 +18,32 @@ using namespace thrill;
 //hh
 #include <thrill/api/equal_to_dia.hpp>
 #include <thrill/common/stats_timer.hpp>
-#include <thrill/api/generate.hpp>
 #include <iostream>     // for std::cout, std::endl
-#include <unistd.h>     // _SC_PAGE_SIZE is defined and sysconf() is declared
+// #include <fstream>   // for ifstream
+#include <boost/iostreams/device/mapped_file.hpp>
+
 #include <stdlib.h>     // for atoi
-#include <stdio.h>      // lseek?
-#include <sys/mman.h>   // for mmap (to do: check difference to mmap64)
+#include <sys/mman.h>   // for mmap   mmap64: library libc  (use the -l c option [size_t len; off64_t off[]
+#include <sys/types.h>  // for mmap64 ?
 #include <fcntl.h>      // for open
 
-void WordCount(thrill::Context& ctx,
-               const char* srcAddr, size_t file_size, std::string out_file) {
 
+
+void WordCount(thrill::Context& ctx,
+               std::vector<std::string>  v_input, std::string out_file) {
     using Pair = std::pair<std::string, size_t>;
 
-    common::StatsTimerStart time_distribute;
+    common::StatsTimerStart timer_all_wc;
+    common::StatsTimerStart timer_distribute;
 
-    size_t page_size   = (size_t)sysconf(_SC_PAGESIZE);
-    size_t n_page      = file_size / page_size;  // no. of "complete" pages in the input file
-    size_t page_delta  = file_size - n_page * page_size ;
+    // distribute components of vector to workers (evenenly)
+    auto word_line  = EqualToDIA(ctx, v_input);
 
-    char* tmp_page = (char *) malloc(sizeof(char) * (page_size+1)); // allocate memory on heap
-    if ( !tmp_page || tmp_page  == NULL ){
-        LOG1 << "Error: tmp_page - memory allocation failed.";
-    }
+    timer_distribute.Seconds();
+    LOG1 << "time_distribute[sec]= "    << timer_distribute    ;
+    common::StatsTimerStart timer_split;
 
-    // Split input data (= memory mapped file) into "small" pages (Linux: 1 page = 4096 B)
-    // To do: check the size of items on the period of time_distribute
-    auto file_blocks = Generate(ctx, n_page + 1 /* number of items to be generated  */,
-                                [&]( size_t i_position = 0L ) {
-        i_position++;
-        size_t size_true = page_size;
-        if( i_position == n_page+1 ) size_true = page_delta;
-        for( size_t i = 0; i < size_true; i++){
-            *(tmp_page + i) = *(srcAddr + (i_position-1) * page_size + i );
-        };
-        // Debug
-        // std::cout << "Generate: id=" << i_Worker << ", i_position=" << i_position
-        //           << ", size_true=" << size_true << std::endl;
-        *(tmp_page + size_true) = '\0'; // add null terminator at end of page
-        return tmp_page;
-    });
-
-    /*
-    // Debug: is memory mapped file distributed correctly to worker?
-    file_blocks.Map([&ctx](const std::string& p) {
-        return p;
-    })
-    .WriteLines(out_file);
-    */
-
-    time_distribute.Seconds();
-    LOG1 << "time_distribute[sec]= "    << time_distribute    ;
-    common::StatsTimerStart time_split;
-
-    auto word_pairs = file_blocks.template FlatMap<Pair>(
+    auto word_pairs = word_line.template FlatMap<Pair>(
             // lambda: split line into single words and emit the pair (word, 1)
             [](const std::string& line, auto emit) {
                 tlx::split_view(' ', line, [&](tlx::string_view sv) {
@@ -79,59 +51,103 @@ void WordCount(thrill::Context& ctx,
                 });
             });
 
-
-    time_split.Seconds();
-    LOG1 << "time_split[sec]= "    << time_split    ;
-    common::StatsTimerStart time_reduce;
-
+    timer_split.Seconds();
+    LOG1 << "time_split[sec]= "    << timer_split    ;
+    common::StatsTimerStart timer_reduce;
 
     word_pairs.ReduceByKey(
-            [](const Pair& p) { return p.first; }, // lambda_1: extract key = word string
-            [](const Pair& a, const Pair& b) {     // lambda_2: ...
-                return Pair(a.first, a.second + b.second); //  ... update value = word counter
-            })
+                    [](const Pair& p) { return p.first; }, // lambda_1: extract key = word string
+                    [](const Pair& a, const Pair& b) {     // lambda_2: ...
+                        return Pair(a.first, a.second + b.second); //  ... update word counter
+                    })
             .Map([&ctx](const Pair& p) {                // lambda: input = context ctx
                 size_t wID = ctx.local_worker_id();     //  ...    determine ID of worker ...
-                //  ... convert ID + Pair to string
+                // ... convert ID + Pair to string
                 return "worker_" + std::to_string(wID) + ": " +	p.first + ": " + std::to_string(p.second);
             })
-            .WriteLines(out_file)
-            ;
+            .WriteLines(out_file);
 
-    time_reduce.Seconds();
-    LOG1 << "time_reduce[sec]= " << time_reduce  ;
+    timer_reduce.Seconds();
+    LOG1 << "time_reduce[sec]= " << timer_reduce  ;
+    timer_all_wc.Seconds();
+    LOG1 << "timer_all_wc[sec]= " << timer_all_wc  ;
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cout << "Usage: " << argv[0] << " <filePath_input> <filePath_output> " << std::endl;
+    if (argc != 4) {
+        std::cout << "Usage: " << argv[0] << " <filePath_input> <filePath_output> <nWorker> " << std::endl;
         return -1;
     }
-
+    common::StatsTimerStart timer_all_main;
     common::StatsTimerStart timer_prepare;
+
+    size_t nWorker    = (size_t) atoi(argv[3]);
+    //size_t line_Bytes = (size_t) atoi(argv[4]);
 
     // access input data stored on disc or FAM
     int in_fd = open(argv[1], O_RDONLY);
 
     // length of file
     size_t file_size = lseek(in_fd, 0, SEEK_END);
+    lseek(in_fd, 0, SEEK_SET); // Return cursor to begin of file
 
-    // MAP_PRIVATE: mapping needs reservation of memory
-    //              => size of file limited to RAM (physical memory) + SWAP (virtual memory)
-    // MAP_SHARED: changes "in-memory" are written back to file AND kernel can free
-    //             up memory - if needed - by writing back to file
-    const char* srcAddr;
-    srcAddr = static_cast<char*>( mmap(NULL, file_size, PROT_READ, MAP_SHARED, in_fd, 0L ) );
+    // MAP_PRIVATE: mapping needs reservation of memory => size of file limited to RAM (physical memory) + SWAP (virtual memory)
+    // MAP_SHARED: changes "in-memory" are written back to file  AND kernel can free up memory - if needed - by writing back to file
+    const char* srcAddr = static_cast<char*>( mmap(NULL, file_size, PROT_READ, MAP_SHARED, in_fd, 0L ) );
     if (srcAddr == MAP_FAILED){
         std::cout << "--- Error: mmap failed  " << std::endl;
         return -1 ;
     }
 
+
+    // copy memory-mapped file page-wise into a vector, where size of page = file_size / nWorker
+    size_t delta_file_size = file_size / nWorker ;
+
+    std::vector<std::string> inVector; // = empty container for strings
+    inVector.reserve(file_size);       // to speed up push_back method, which is used below
+
+    char* tmp_page = (char *) malloc(delta_file_size + 0); // allocate memory on heap
+    // + 1 ?  => magic byte -> no "Segmentation fault: 11" for large input files
+    if ( !tmp_page || tmp_page == NULL )
+        std::cout << "Error: tmp_page - memory allocation failed. " <<  std::endl;
+
+    for( size_t n = 0; n < nWorker; n++) {
+        for( size_t i = 0; i < delta_file_size; i++){
+            *(tmp_page+i) = *(srcAddr + n*delta_file_size + i);
+        };
+        inVector.push_back(tmp_page); // = add string tmp_page at the ende of inVector
+    };
+
+    // If file_size % nWorker != 0: do not forget the remaining chars at the end of the input file
+    size_t remainder_size = file_size - nWorker*delta_file_size ;
+    char*  tmp_page_remain = (char *) malloc(remainder_size + 0); // allocate memory on heap
+    if ( !tmp_page_remain || tmp_page_remain == NULL )
+        std::cout << "Error: tmp_page_remain - memory allocation failed. " <<  std::endl;
+    if( remainder_size > 0){
+        for( size_t i = 0; i < remainder_size ; i++){
+            *(tmp_page_remain+i) = *(srcAddr + nWorker*delta_file_size + i);
+        };
+        inVector.push_back(tmp_page_remain); // = add string tmp_page_remain at the ende of inVector
+    }
+
+    /*   // check inVector:
+    for_each(inVector.begin(), inVector.end(), [] (std::string& s){ std::cout << s << " "; });
+    std::cout << "[main] inVector: size = " << inVector.size()
+	      << ",  capacity = " << inVector.capacity()
+	      << ",  max_size = " << inVector.max_size()  << std::endl;
+    */
+
     timer_prepare.Seconds();
     std::cout << "[main] time_prepare[sec]= " << timer_prepare << std::endl;
 
-    return thrill::Run(  // Launch Thrill program: the lambda function is executed on each worker.
-    [&](thrill::Context& ctx) { WordCount(ctx,
-                                          srcAddr /* call memory mapped data by address => fast */,
-                                          file_size, argv[2]); });
+    // garbage collection
+    free( tmp_page );
+    free( tmp_page_remain );
+    munmap( (void *)srcAddr, file_size);
+    close(in_fd);
+
+    return thrill::Run(  // Launch Thrill program: the lambda function is executed
+            // on each worker.
+            [&](thrill::Context& ctx) { WordCount(ctx, inVector, argv[2]); } );
+
 }
